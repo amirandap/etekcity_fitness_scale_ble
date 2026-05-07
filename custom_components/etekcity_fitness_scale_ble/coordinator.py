@@ -66,10 +66,11 @@ try:
             data[_DU_KEY] = int(payload[21])
             data[_W_KEY] = round(float(weight) / 1000, 2)
             data["stable"] = bool(payload[19])  # True = stable, False = below-threshold
-            if payload[20] == 1:
-                impedance = _struct.unpack("<H", payload[13:15])[0]
-                if impedance:
-                    data[_IMP_KEY] = int(impedance)
+            # Read impedance regardless of payload[20] flag — on some ESF-551
+            # units payload[20] stays 0 even when impedance bytes are valid.
+            impedance = _struct.unpack("<H", payload[13:15])[0]
+            if impedance:
+                data[_IMP_KEY] = int(impedance)
             return data
         return None
 

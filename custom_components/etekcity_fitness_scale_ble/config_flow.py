@@ -1423,6 +1423,7 @@ class ScaleOptionsFlow(OptionsFlow):
             new_data = {
                 **self.config_entry.data,
                 CONF_SCALE_DISPLAY_UNIT: user_input[CONF_SCALE_DISPLAY_UNIT],
+                CONF_RECORD_BELOW_THRESHOLD: user_input[CONF_RECORD_BELOW_THRESHOLD],
             }
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=new_data
@@ -1435,6 +1436,9 @@ class ScaleOptionsFlow(OptionsFlow):
 
         display_unit = self.config_entry.data.get(
             CONF_SCALE_DISPLAY_UNIT, UnitOfMass.KILOGRAMS
+        )
+        current_record_below_threshold = self.config_entry.data.get(
+            CONF_RECORD_BELOW_THRESHOLD, False
         )
         if scale_model == ScaleModel.ESF24:
             description_placeholders = {
@@ -1454,6 +1458,10 @@ class ScaleOptionsFlow(OptionsFlow):
                             UnitOfMass.POUNDS: "Imperial (lbs)",
                         }
                     ),
+                    vol.Required(
+                        CONF_RECORD_BELOW_THRESHOLD,
+                        default=current_record_below_threshold,
+                    ): bool,
                 }
             ),
         )
@@ -1469,7 +1477,6 @@ class ScaleOptionsFlow(OptionsFlow):
                 CONF_HISTORY_RETENTION_DAYS: user_input[CONF_HISTORY_RETENTION_DAYS],
                 CONF_MAX_HISTORY_SIZE: user_input[CONF_MAX_HISTORY_SIZE],
                 CONF_ENABLE_LIBRARY_LOGGING: user_input[CONF_ENABLE_LIBRARY_LOGGING],
-                CONF_RECORD_BELOW_THRESHOLD: user_input[CONF_RECORD_BELOW_THRESHOLD],
             }
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=new_data
@@ -1483,9 +1490,6 @@ class ScaleOptionsFlow(OptionsFlow):
         # Get current values
         current_library_logging = self.config_entry.data.get(
             CONF_ENABLE_LIBRARY_LOGGING, False
-        )
-        current_record_below_threshold = self.config_entry.data.get(
-            CONF_RECORD_BELOW_THRESHOLD, False
         )
 
         return self.async_show_form(
@@ -1509,10 +1513,6 @@ class ScaleOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_ENABLE_LIBRARY_LOGGING,
                         default=current_library_logging,
-                    ): bool,
-                    vol.Required(
-                        CONF_RECORD_BELOW_THRESHOLD,
-                        default=current_record_below_threshold,
                     ): bool,
                 }
             ),

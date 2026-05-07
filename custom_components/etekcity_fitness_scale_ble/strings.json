@@ -142,7 +142,11 @@
         "title": "Scale Settings",
         "description": "Configure scale display unit{esf24_note}",
         "data": {
-          "scale_display_unit": "Scale Display Unit"
+          "scale_display_unit": "Scale Display Unit",
+          "record_below_threshold": "Record Below-Threshold Readings"
+        },
+        "data_description": {
+          "record_below_threshold": "When enabled, unstable readings (scale still settling) are accepted if they remain consistent within 20g over 3 seconds. Useful when the scale never sends a stable confirmation byte."
         }
       },
       "advanced_settings": {
@@ -151,14 +155,12 @@
         "data": {
           "history_retention_days": "History Retention (days)",
           "max_history_size": "Max History Size (measurements)",
-          "enable_library_logging": "Enable Library Logging",
-          "record_below_threshold": "Record Below-Threshold Readings"
+          "enable_library_logging": "Enable Library Logging"
         },
         "data_description": {
           "history_retention_days": "How many days to keep weight measurements. Older measurements will be automatically removed. Range: 1-365 days.",
           "max_history_size": "Maximum number of measurements to store per user. When exceeded, oldest measurements are removed. Range: 10-1000 measurements.",
-          "enable_library_logging": "When enabled, logs from the underlying etekcity_esf551_ble library will be included in the integration's logs. Useful for troubleshooting BLE communication issues.",
-          "record_below_threshold": "When enabled, unstable readings (scale still settling) are accepted if they remain consistent within 20g over 3 seconds. Useful when the scale never sends a stable confirmation byte."
+          "enable_library_logging": "When enabled, logs from the underlying etekcity_esf551_ble library will be included in the integration's logs. Useful for troubleshooting BLE communication issues."
         }
       }
     },

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import logging
 from math import floor
 import platform
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import Any, Literal
@@ -41,6 +42,40 @@ try:
 except ImportError:
     ESF24Scale = None  # type: ignore[misc, assignment]
     ESF551Scale = None  # type: ignore[misc, assignment]
+
+# Monkey-patch etekcity_esf551_ble parse() to:
+#   1. Accept payload[19] == 0 (unstable / below-threshold) in addition to 1 (stable)
+#   2. Inject a STABLE_KEY ("stable") bool into the returned measurements dict
+# This allows the coordinator to apply its own consistency logic for unstable readings.
+try:
+    import struct as _struct
+    from etekcity_esf551_ble.esf551 import parser as _esf551_parser
+    from etekcity_esf551_ble.const import IMPEDANCE_KEY as _IMP_KEY, WEIGHT_KEY as _W_KEY, DISPLAY_UNIT_KEY as _DU_KEY
+
+    def _patched_esf551_parse(payload: bytearray):
+        if (
+            payload is not None
+            and len(payload) == 22
+            and payload[19] in (0, 1)  # 0=unstable/in-progress, 1=stable
+            and payload[0:2] == b"\xa5\x02"
+            and payload[3:5] == b"\x10\x00"
+            and payload[6:10] == b"\x01\x61\xa1\x00"
+        ):
+            data = {}
+            weight = _struct.unpack("<I", payload[10:13].ljust(4, b"\x00"))[0]
+            data[_DU_KEY] = int(payload[21])
+            data[_W_KEY] = round(float(weight) / 1000, 2)
+            data["stable"] = bool(payload[19])  # True = stable, False = below-threshold
+            if payload[20] == 1:
+                impedance = _struct.unpack("<H", payload[13:15])[0]
+                if impedance:
+                    data[_IMP_KEY] = int(impedance)
+            return data
+        return None
+
+    _esf551_parser.parse = _patched_esf551_parse
+except Exception:
+    pass  # If patch fails, fall back to original behaviour
 from habluetooth import HaScannerRegistration
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.components import persistent_notification
@@ -51,15 +86,19 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import MassConverter
 
 from .const import (
+    BELOW_THRESHOLD_CONSISTENCY_WINDOW_S,
+    BELOW_THRESHOLD_TOLERANCE_KG,
     CONF_ENABLE_LIBRARY_LOGGING,
     CONF_HISTORY_RETENTION_DAYS,
     CONF_MAX_HISTORY_SIZE,
     CONF_MOBILE_NOTIFY_SERVICES,
+    CONF_RECORD_BELOW_THRESHOLD,
     CONF_USER_ID,
     CONF_USER_NAME,
     CONF_WEIGHT_HISTORY,
     HISTORY_RETENTION_DAYS,
     MAX_HISTORY_SIZE,
+    STABLE_KEY,
     ScaleModel,
 )
 from .person_detector import PersonDetector
@@ -728,6 +767,10 @@ class ScaleDataUpdateCoordinator:
         )  # active notification timestamps
         # Config entry reference for persistence
         self._config_entry_id: str | None = None
+        # Below-threshold consistency buffer: list of (time, weight_kg) tuples
+        self._below_threshold_buffer: list[tuple[float, float]] = []
+        # Whether to record readings that the scale marked as unstable (stable byte = 0)
+        self._record_below_threshold: bool = False
 
     def set_display_unit(self, unit: WeightUnit) -> None:
         """Set the display unit for the scale.
@@ -859,6 +902,10 @@ class ScaleDataUpdateCoordinator:
             config_entry_id: The config entry ID to store.
         """
         self._config_entry_id = config_entry_id
+        # Refresh below-threshold flag from config entry
+        entry = self._hass.config_entries.async_get_entry(config_entry_id)
+        if entry:
+            self._record_below_threshold = entry.data.get(CONF_RECORD_BELOW_THRESHOLD, False)
 
     def _normalize_measurement(self, measurement: dict) -> dict:
         """Normalize measurement dict to have consistent field order.
@@ -1820,6 +1867,60 @@ class ScaleDataUpdateCoordinator:
                 impedance,
             )
             return
+
+        # --- Below-threshold (unstable) consistency logic ---
+        is_stable = data.measurements.get(STABLE_KEY, True)
+        if not is_stable:
+            if not self._record_below_threshold:
+                _LOGGER.debug(
+                    "Dropping unstable (below-threshold) reading %.3f kg — "
+                    "enable 'record_below_threshold' in advanced settings to capture these",
+                    weight_kg,
+                )
+                return
+
+            # Accumulate readings into the consistency buffer
+            now = time.monotonic()
+            self._below_threshold_buffer.append((now, weight_kg))
+            # Evict entries older than the consistency window
+            cutoff = now - BELOW_THRESHOLD_CONSISTENCY_WINDOW_S
+            self._below_threshold_buffer = [
+                (t, w) for t, w in self._below_threshold_buffer if t >= cutoff
+            ]
+            # We need at least 2 readings within the window to judge consistency
+            if len(self._below_threshold_buffer) < 2:
+                _LOGGER.debug(
+                    "Below-threshold reading %.3f kg — waiting for consistency window (%ds)",
+                    weight_kg,
+                    BELOW_THRESHOLD_CONSISTENCY_WINDOW_S,
+                )
+                return
+            # Check variation within window
+            weights_in_window = [w for _, w in self._below_threshold_buffer]
+            variation = max(weights_in_window) - min(weights_in_window)
+            if variation > BELOW_THRESHOLD_TOLERANCE_KG:
+                _LOGGER.debug(
+                    "Below-threshold reading rejected — variation %.3f kg > tolerance %.3f kg in %ds window",
+                    variation,
+                    BELOW_THRESHOLD_TOLERANCE_KG,
+                    BELOW_THRESHOLD_CONSISTENCY_WINDOW_S,
+                )
+                return
+            # Consistent enough — emit with averaged weight and clear buffer
+            avg_weight = round(sum(weights_in_window) / len(weights_in_window), 3)
+            _LOGGER.debug(
+                "Below-threshold reading accepted (variation=%.3f kg, n=%d, avg=%.3f kg)",
+                variation,
+                len(weights_in_window),
+                avg_weight,
+            )
+            self._below_threshold_buffer.clear()
+            # Overwrite weight with the averaged stable estimate
+            data.measurements["weight"] = avg_weight
+        else:
+            # Stable reading — clear any in-progress below-threshold buffer
+            self._below_threshold_buffer.clear()
+        # --- end below-threshold logic ---
 
         # Create timestamp ONCE when measurement is received
         # This ensures consistent timestamps across all code paths (auto-assign, detection, pending)

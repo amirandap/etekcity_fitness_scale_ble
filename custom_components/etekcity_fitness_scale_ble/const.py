@@ -60,6 +60,12 @@ CONF_MAX_HISTORY_SIZE = "max_history_size"
 
 # Advanced settings
 CONF_ENABLE_LIBRARY_LOGGING = "enable_library_logging"
+CONF_RECORD_BELOW_THRESHOLD = "record_below_threshold"
+
+# Below-threshold (unstable) reading consistency logic
+BELOW_THRESHOLD_CONSISTENCY_WINDOW_S = 3  # seconds to wait for consistent readings
+BELOW_THRESHOLD_TOLERANCE_KG = 0.020  # 20g max variation within window to accept
+STABLE_KEY = "stable"  # key injected into measurements dict by patched parse()
 
 # Adaptive tolerance - base calculation (hybrid percentage with bounds)
 DEFAULT_TOLERANCE_PERCENTAGE = 0.04  # 4% of user's weight
